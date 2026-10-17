@@ -2,7 +2,42 @@ from typing import Any
 from urllib.parse import urlparse
 
 
-def search_apps(query: str, limit: int = 10) -> list[dict[str, Any]]:
+ARAB_COUNTRIES = {
+    "فلسطين": "ps",
+    "الأردن": "jo",
+    "مصر": "eg",
+    "السعودية": "sa",
+    "الإمارات": "ae",
+    "قطر": "qa",
+    "الكويت": "kw",
+    "عُمان": "om",
+    "المغرب": "ma",
+    "تونس": "tn",
+    "الجزائر": "dz",
+    "البحرين": "bh",
+    "العراق": "iq",
+    "لبنان": "lb",
+}
+
+CURATED_ARAB_RIDE_APPS = [
+    "Careem",
+    "Uber",
+    "inDrive",
+    "Jeeny",
+    "Kaiian",
+    "Bolt",
+    "Yango",
+    "DiDi",
+    "TaxiF",
+    "KDDAD",
+]
+
+
+def search_apps(
+    query: str,
+    limit: int = 10,
+    countries: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Search Google Play when the optional scraper dependency is available.
 
     The function is deliberately isolated so that rate limits, retries, and review
@@ -13,13 +48,24 @@ def search_apps(query: str, limit: int = 10) -> list[dict[str, Any]]:
     except ImportError:
         return []
 
-    try:
-        results = search(query, lang="en", country="us", n_hits=limit)
-    except Exception:
-        return []
+    country_codes = countries or list(ARAB_COUNTRIES.values())
+    all_results: dict[str, dict[str, Any]] = {}
+    for country in country_codes:
+        try:
+            results = search(query, lang="ar", country=country, n_hits=limit)
+        except Exception:
+            try:
+                results = search(query, lang="en", country=country, n_hits=limit)
+            except Exception:
+                continue
+        for item in results:
+            app_id = item.get("appId") or item.get("app_id") or item.get("id")
+            if not app_id or app_id in all_results:
+                continue
+            all_results[app_id] = {**item, "_country": country}
 
     normalized: list[dict[str, Any]] = []
-    for item in results:
+    for item in all_results.values():
         app_id = item.get("appId") or item.get("app_id") or item.get("id")
         app_url = item.get("url") or ""
         if not app_id and app_url:
@@ -42,9 +88,27 @@ def search_apps(query: str, limit: int = 10) -> list[dict[str, Any]]:
                 "url": app_url,
                 "icon_url": item.get("icon"),
                 "source": "google_play",
+                "country": item.get("_country"),
             }
         )
-    return normalized
+    normalized.sort(key=lambda item: (item.get("score") or 0, item.get("ratings_count") or 0), reverse=True)
+    return normalized[:limit]
+
+
+def search_curated_arab_apps(limit: int = 10) -> list[dict[str, Any]]:
+    """Return one verified Google Play result for each curated Arabic ride app."""
+    found: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for app_name in CURATED_ARAB_RIDE_APPS:
+        results = search_apps(app_name, limit=3, countries=["sa", "ae", "eg", "jo"])
+        match = next((item for item in results if item.get("app_id") not in seen), None)
+        if match:
+            match["curated_name"] = app_name
+            found.append(match)
+            seen.add(match["app_id"])
+        if len(found) >= limit:
+            break
+    return found[:limit]
 
 
 def fetch_reviews(app_id: str, count: int = 150) -> list[dict[str, Any]]:

@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 from .config import settings
 
@@ -58,6 +59,12 @@ def init_db() -> None:
             );
             """
         )
+        existing_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(competitors)").fetchall()
+        }
+        for column in ("region", "booking_method", "price_info", "strengths", "weaknesses", "notes"):
+            if column not in existing_columns:
+                connection.execute(f"ALTER TABLE competitors ADD COLUMN {column} TEXT")
 
 
 def save_competitor(app: dict[str, Any]) -> None:
@@ -84,6 +91,27 @@ def save_competitor(app: dict[str, Any]) -> None:
                 app.get("developer"), app.get("score"), app.get("ratings_count"),
                 app.get("installs"), app.get("category"), app.get("url"),
                 app.get("icon_url"), app.get("source", "google_play"), now, now,
+            ),
+        )
+
+
+def save_local_competitor(data: dict[str, Any]) -> None:
+    """Save a manually researched local alternative."""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO competitors
+              (app_id, title, developer, category, url, source, created_at, updated_at,
+               region, booking_method, price_info, strengths, weaknesses, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"local-{uuid4().hex}", data["title"], "منافس محلي",
+                data.get("competitor_type"), data.get("source_url"), "manual",
+                now, now, data.get("region"), data.get("booking_method"),
+                data.get("price_info"), data.get("strengths"),
+                data.get("weaknesses"), data.get("notes"),
             ),
         )
 
